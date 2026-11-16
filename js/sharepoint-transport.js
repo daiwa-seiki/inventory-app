@@ -219,17 +219,25 @@ class SharePointTransport {
         const cached = this._raw.get(store);
         if (cached && cached.eTag === entry.eTag) return cached;
 
-        const meta = await this._json(`/drives/${this.driveId}/items/${entry.id}?$select=id,eTag,@microsoft.graph.downloadUrl`);
+        // ファイル情報（$select を付けると、SharePoint ではダウンロード用URLが返らないことがあるので付けない）
+        const meta = await this._json(`/drives/${this.driveId}/items/${entry.id}`);
         const dl = meta['@microsoft.graph.downloadUrl'];
         let res;
         try {
-            res = await fetch(dl, { cache: 'no-store' });
+            res = dl
+                ? await fetch(dl, { cache: 'no-store' })
+                // ダウンロード用URLが無い場合は、Graph の /content から直接読む
+                : await this._fetch(`/drives/${this.driveId}/items/${entry.id}/content`, { cache: 'no-store' });
         } catch (e) {
             const err = new Error(`SharePoint からデータを読み込めません（${e.message}）`);
             err.name = 'NetworkError';
             throw err;
         }
-        if (!res.ok) throw await this._error(res, store);
+        if (!res.ok) {
+            const err = await this._error(res, store);
+            err.message = `「${SharePointTransport.fileName(store)}」を読み込めませんでした（${res.status}）。\n${err.message}`;
+            throw err;
+        }
         const body = await res.json();
         const kp = DB_STORE_DEFS[store].keyPath;
         const records = new Map();
