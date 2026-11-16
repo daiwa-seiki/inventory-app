@@ -1,9 +1,9 @@
 /**
- * 受注管理（内田洋行EDI）
+ * 受注管理（取引先EDI）
  *
  * 出荷予定（shipmentSchedules）を「発注番号-明細番号」（例: 7489926-001）で管理する。
  *  - EDI取込        : EDIのCSV（Shift_JIS）を読み、新規・変更・取消を出荷予定に反映
- *  - Excel台帳取込  : 「内田洋行_受注台帳_マクロ版.xlsm」の受注台帳シートを初期データとして読み込む
+ *  - Excel台帳取込  : Excel受注台帳（.xlsm）の「受注台帳」シートを初期データとして読み込む
  *  - 出荷の反映     : 出荷履歴の取込で、発注番号が一致する出荷予定の残数を減らす
  *
  * 出荷予定1件のデータ:
@@ -148,7 +148,7 @@ class OrderManager {
         const colName = (i) => { let s = ''; i++; while (i) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); } return s; };
         for (const [, [idx, name]] of Object.entries(C)) {
             if ((header[idx] || '') !== name) {
-                throw new Error(`内田洋行のEDIファイルではないようです（${file.name}）。\n` +
+                throw new Error(`取り込めるEDIファイルではないようです（${file.name}）。\n` +
                     `${colName(idx)}列は「${name}」のはずですが「${header[idx] || '(なし)'}」でした。`);
             }
         }
@@ -387,7 +387,7 @@ class OrderManager {
 
     /**
      * 「受注台帳」シートを読み込み、出荷予定をすべて置き換える
-     * @param {File} file - 内田洋行_受注台帳_マクロ版.xlsm
+     * @param {File} file - Excel受注台帳（.xlsm）
      */
     async importLedgerExcel(file) {
         if (typeof XLSX === 'undefined') {
@@ -395,7 +395,7 @@ class OrderManager {
         }
         const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
         const ws = wb.Sheets['受注台帳'];
-        if (!ws) throw new Error('「受注台帳」シートが見つかりません。内田洋行_受注台帳のファイルを選んでください。');
+        if (!ws) throw new Error('「受注台帳」シートが見つかりません。受注台帳のExcelファイルを選んでください。');
 
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
         const header = (rows[0] || []).map(h => String(h ?? '').trim());

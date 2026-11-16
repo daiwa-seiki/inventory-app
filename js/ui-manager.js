@@ -1385,7 +1385,9 @@ class UIManager {
     } else if (orderMethod === '通販') {
       actionSuccess = this._openWebOrder(item);
     } else if (orderMethod === '電話・FAX') {
-      this._openPrintOrder(item, supplier, orderQty, today);
+      const companyName = await this._getCompanyName();
+      if (companyName === null) return;
+      this._openPrintOrder(item, supplier, orderQty, today, companyName);
     } else {
       await this.showOrderModal(item.partId);
       return;
@@ -1422,7 +1424,21 @@ class UIManager {
     return true;
   }
 
-  _openPrintOrder(item, supplier, orderQty, today) {
+  /**
+   * 発注書に載せる自社名（公開リポジトリに社名を書かないよう、SharePoint の設定データに保存）
+   * 未登録なら1回だけ入力してもらう。キャンセル時は null
+   */
+  async _getCompanyName() {
+    const rec = await this.db.get('appSettings', 'companyName');
+    if (rec?.value) return rec.value;
+    const name = (prompt('発注書に印字する自社名を入力してください（初回のみ。全員で共有されます）', '') || '').trim();
+    if (!name) return null;
+    await this.db.put('appSettings', { key: 'companyName', value: name });
+    return name;
+  }
+
+  _openPrintOrder(item, supplier, orderQty, today, companyName = '') {
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const printWindow = window.open('', '_blank');
     const supplierName = supplier?.supplierName || item.supplierCode || '未登録';
     const fax   = supplier?.fax   || '';
@@ -1448,7 +1464,7 @@ class UIManager {
   </div>
   <div class="meta-block" style="text-align:right;">
     <p>発注日: ${today}</p>
-    <p>大和精機株式会社</p>
+    <p>${esc(companyName)}</p>
   </div>
 </div>
 <table>
@@ -2046,8 +2062,8 @@ class UIManager {
         ${needsCheckCount > 0 && statusFilter !== '要確認' ? `<button class="btn btn-sm btn-danger" title="要確認の行だけを表示" onclick="uiManager.loadShipmentSchedule({ status: '要確認' })">⚠ 要確認 ${needsCheckCount}件</button>` : ''}
         <input type="file" id="edi-import-input" accept=".csv" multiple style="display: none;" />
         <input type="file" id="ledger-import-input" accept=".xlsm,.xlsx" style="display: none;" />
-        <button id="import-edi-btn" class="btn btn-accent" title="内田洋行EDIのCSV（複数選択可）">📥 EDI取込</button>
-        <button id="import-ledger-btn" class="btn btn-secondary" title="内田洋行_受注台帳（Excel）で出荷予定を置き換え">📗 Excel受注台帳から取込</button>
+        <button id="import-edi-btn" class="btn btn-accent" title="EDIのCSV（複数選択可）">📥 EDI取込</button>
+        <button id="import-ledger-btn" class="btn btn-secondary" title="Excel受注台帳で出荷予定を置き換え">📗 Excel受注台帳から取込</button>
         <button class="btn btn-primary" onclick="uiManager.showAddShipmentModal()">➕ 出荷予定を追加</button>
         <button id="clear-schedule-btn" class="btn btn-danger">🗑 すべて削除</button>
       </div>
@@ -2589,7 +2605,7 @@ class UIManager {
   }
 
   // -------------------------
-  // 受注管理（内田洋行EDI）
+  // 受注管理（EDI）
   // -------------------------
 
   /** 要確認の理由を表示し、確認済みにする */
@@ -2673,7 +2689,7 @@ class UIManager {
           ${kubunList.map(k => `<option value="${esc(k)}" ${filters.kubun === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}
         </select>
         <label style="display: flex; gap: 4px; align-items: center; color: var(--text-secondary);">
-          <input type="checkbox" id="edilog-notmjs" ${filters.notMjs ? 'checked' : ''} /> MJS未反映のみ
+          <input type="checkbox" id="edilog-notmjs" ${filters.notMjs ? 'checked' : ''} /> 販売管理 未反映のみ
         </label>
         <input type="search" id="edilog-keyword" class="filter-dropdown" placeholder="発注番号・製品・内容で絞込" value="${esc(filters.keyword || '')}" style="width: 260px;" />
         <span style="color: var(--text-muted); margin-left: auto;">
@@ -2682,12 +2698,12 @@ class UIManager {
       </div>
       <div style="color: var(--text-muted); margin-bottom: var(--spacing-sm);">
         ${total.toLocaleString('ja-JP')}件${total > shown.length ? `（新しい順に ${shown.length}件を表示）` : ''}。
-        並行運用中は、MJSに入力したら「MJS反映」にチェックを入れてください。前倒しはオレンジで表示します。
+        並行運用中は、販売管理システムに入力したら「販売管理反映」にチェックを入れてください。前倒しはオレンジで表示します。
       </div>
       <div class="table-container">
         <table class="data-table">
           <thead><tr>
-            <th>取込日時</th><th>ファイル</th><th>発注番号</th><th>区分</th><th>結果</th><th>変更内容</th><th>製品名</th><th style="white-space: nowrap;">MJS反映</th>
+            <th>取込日時</th><th>ファイル</th><th>発注番号</th><th>区分</th><th>結果</th><th>変更内容</th><th>製品名</th><th style="white-space: nowrap;">販売管理反映</th>
           </tr></thead>
           <tbody>
             ${shown.map(l => `

@@ -132,13 +132,26 @@ class SharePointTransport {
 
     /** SharePoint のフォルダURLから、ドライブとフォルダのIDを調べる */
     async _resolveFolder() {
-        const url = String(this.cfg.folderUrl).trim();
+        let url = String(this.cfg.folderUrl).trim();
         const cacheKey = `inv_sp_folder_${url}`;
         try {
             const c = JSON.parse(localStorage.getItem(cacheKey) || 'null');
             if (c && c.driveId && c.folderId) Object.assign(this, c);
         } catch (e) { /* 使えない環境 */ }
         if (this.driveId && this.folderId) return;
+
+        // 「/sites/…」のようにパスだけのときは、ログインした人の会社の SharePoint アドレスを補う
+        if (url.startsWith('/')) {
+            let origin;
+            try {
+                origin = new URL((await this._json('/sites/root?$select=webUrl')).webUrl).origin;
+            } catch (e) {
+                // 予備: 自分の OneDrive（https://○○-my.sharepoint.com）から求める
+                const my = new URL((await this._json('/me/drive?$select=webUrl')).webUrl);
+                origin = `${my.protocol}//${my.hostname.replace(/-my\.sharepoint\.com$/i, '.sharepoint.com')}`;
+            }
+            url = origin + url;
+        }
 
         let item = null;
         const u0 = new URL(url);

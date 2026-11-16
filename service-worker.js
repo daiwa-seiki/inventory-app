@@ -2,7 +2,7 @@
 // 方針: 常にサーバーの最新ファイルを使う（ネットワーク優先）。
 //       サーバーに繋がらない時だけ、前回のファイルで画面を表示する。
 //       データ（/api/）はキャッシュしない。
-const CACHE_NAME = 'inventory-management-v4';
+const CACHE_NAME = 'inventory-management-v5';
 const urlsToCache = [
     './',
     './index.html',

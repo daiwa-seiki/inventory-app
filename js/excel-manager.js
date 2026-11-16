@@ -851,7 +851,7 @@ class ExcelManager {
         const quantityIndex = headers.findIndex(h => h === '数量' || h === '出荷数');
         const dateIndex = headers.findIndex(h => h === '出荷予定日' || h === '出荷日' || h === '出荷実績日' || h === '発行日');
         const { orderIdx, detailIdx } = this.findPurchaseOrderColumns(headers);  // 任意列（あれば出荷予定の残数を減らす）
-        // MJS 売上明細表の場合: 伝票NO＋行NO で1行を特定（二重取込の判定に使う）、取引区分で返品などを区別
+        // 売上明細表（伝票NO・行NO 列あり）の場合: 伝票NO＋行NO で1行を特定（二重取込の判定に使う）、取引区分で返品などを区別
         const slipIdx = headers.indexOf('伝票NO');
         const slipLineIdx = headers.indexOf('行NO');
         const tradeIdx = headers.indexOf('取引区分名');
@@ -930,10 +930,11 @@ class ExcelManager {
             const shipmentDate = this.normalizeDate(dateValue);
 
             // 同じ行は同じIDになる → 二重取込を防ぐ
-            //  MJS売上明細: 伝票NO＋行NO ／ それ以外: 発注番号・日付・数量
+            //  売上明細表: 伝票NO＋行NO ／ それ以外: 発注番号・日付・数量
             const slipNo = slipIdx >= 0 ? (values[slipIdx] || '').trim() : '';
             let id;
             if (slipNo) {
+                // ID の形は取込済みデータと合わせるため変更しない
                 id = `HIST_MJS_${slipNo}_${slipLineIdx >= 0 ? (values[slipLineIdx] || '1').trim() : '1'}`;
             } else {
                 const baseId = `HIST_${orderNo || productCode}_${shipmentDate}_${quantity}`;
