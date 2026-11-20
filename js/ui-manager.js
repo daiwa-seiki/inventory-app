@@ -1988,7 +1988,7 @@ class UIManager {
       return `
         <tbody class="ship-date-group" data-date="${d}">
           <tr class="ship-date-header" data-kind="${kind}" data-date="${d}" onclick="uiManager.toggleShipmentDate(this)">
-            <td colspan="6">
+            <td colspan="${kind === 'schedule' ? 7 : 6}">
               <span class="ship-date-indicator">${open ? '▼' : '▶'}</span>
               <b>${d}</b>${wd ? `（${wd}）` : ''} ${badge}
               <span class="ship-date-summary">${items.length}件 ・ 出荷数 合計 ${total.toLocaleString('ja-JP')}</span>
@@ -2082,6 +2082,7 @@ class UIManager {
               <th>製品名</th>
               <th>残数</th>
               <th>希望納期</th>
+              <th>納入先</th>
               <th>操作</th>
             </tr>
             <tr>
@@ -2115,6 +2116,7 @@ class UIManager {
                 </select>
               </th>
               <th></th>
+              <th></th>
             </tr>
           </thead>
           ${this._renderShipmentDateGroups(shipments, 'schedule', s => `
@@ -2131,11 +2133,12 @@ class UIManager {
                   ${s.orderQty !== undefined && (s.shippedQty || 0) > 0 ? `<span style="color: var(--text-muted); font-size: 0.8rem;">（発注 ${s.orderQty}・済 ${s.shippedQty}）</span>` : ''}
                 </td>
                 <td>${s.shipmentDate || '-'}</td>
+                <td>${s.deliveryTo || '-'}</td>
                 <td>
                   <button class="btn btn-small btn-secondary" onclick="uiManager.showEditShipmentModal('${s.id}')">編集</button>
                   <button class="btn btn-small btn-danger" onclick="uiManager.deleteShipment('${s.id}')">削除</button>
                 </td>`, filters,
-            '<tr><td colspan="6" style="text-align: center; color: #888;">出荷予定はありません</td></tr>')}
+            '<tr><td colspan="7" style="text-align: center; color: #888;">出荷予定はありません</td></tr>')}
         </table>
       </div>
     `;
@@ -2323,8 +2326,8 @@ class UIManager {
   </div>
   <div class="cond">${esc(cond.join(' ／ '))}　　印刷日時: ${printedAt}</div>
   <table>
-    <colgroup><col style="width:19%"><col style="width:15%"><col><col style="width:13%"><col style="width:14%"></colgroup>
-    <thead><tr><th>発注番号</th><th>製品番号</th><th>製品名</th><th>残数</th><th>希望納期</th></tr></thead>
+    <colgroup><col style="width:16%"><col style="width:12%"><col><col style="width:10%"><col style="width:12%"><col style="width:18%"></colgroup>
+    <thead><tr><th>発注番号</th><th>製品番号</th><th>製品名</th><th>残数</th><th>希望納期</th><th>納入先</th></tr></thead>
     <tbody>
       ${items.map(s => `
       <tr>
@@ -2333,6 +2336,7 @@ class UIManager {
         <td>${esc(s.productName)}</td>
         <td class="num"><b>${num(s.shipmentQuantity)}</b>${s.orderQty !== undefined && (s.shippedQty || 0) > 0 ? `<div class="sub">発注 ${num(s.orderQty)}・済 ${num(s.shippedQty)}</div>` : ''}</td>
         <td>${esc(s.shipmentDate || '-')}</td>
+        <td>${esc(s.deliveryTo || '-')}</td>
       </tr>`).join('')}
     </tbody>
   </table>
