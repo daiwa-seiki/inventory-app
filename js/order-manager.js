@@ -14,6 +14,7 @@
  *  shippedQty       … 出荷済数
  *  shipmentQuantity … 残数（= 発注数量 - 出荷済数。在庫の引当計算に使う）
  *  shipmentDate     … 希望納期（YYYY-MM-DD）
+ *  deliveryTo       … 納入先（EDI: 注文受諾時納入先名。空なら 納入先名）
  *  status           … 有効 / 取消 / 完了
  *  needsCheck       … 要確認の理由（空なら問題なし）
  *  rev              … EDIの明細更新回数（同じEDIを二度取り込んでも二重反映しないため）
@@ -42,6 +43,7 @@ class OrderManager {
         received:    [75, '入荷済数量'],             // BX
         orderQty:    [76, '発注数量'],               // BY
         unitPrice:   [78, '発注単価'],               // CA
+        acceptedDeliveryTo: [137, '注文受諾時納入先名'], // EK（画面の「納入先」に使う）
     };
 
     static KUBUN_LABEL = { '1': '新規', '2': '変更', '3': '取消' };
@@ -175,7 +177,8 @@ class OrderManager {
                 orderQty: parseFloat(get('orderQty')) || 0,
                 unitPrice: parseFloat(get('unitPrice')) || 0,
                 dueDate: OrderManager.ymd8(get('dueDate')),
-                deliveryTo: OrderManager.cleanText(get('deliveryTo')),
+                // 納入先: 注文受諾時納入先名（EK）を優先し、空なら納入先名（BE）
+                deliveryTo: OrderManager.cleanText(get('acceptedDeliveryTo')) || OrderManager.cleanText(get('deliveryTo')),
                 received: parseFloat(get('received')) || 0,
             });
         }
