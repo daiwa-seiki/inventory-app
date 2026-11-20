@@ -1992,6 +1992,8 @@ class UIManager {
               <span class="ship-date-indicator">${open ? '▼' : '▶'}</span>
               <b>${d}</b>${wd ? `（${wd}）` : ''} ${badge}
               <span class="ship-date-summary">${items.length}件 ・ 出荷数 合計 ${total.toLocaleString('ja-JP')}</span>
+              ${kind === 'schedule' ? `<button class="btn btn-small btn-secondary ship-date-print" title="この日の出荷予定を印刷"
+                onclick="event.stopPropagation(); uiManager.printShipmentSchedule(['${d}'])">🖨 印刷</button>` : ''}
             </td>
           </tr>
           ${items.map(x => `<tr class="ship-date-row"${open ? '' : ' style="display: none;"'}>${rowHtml(x)}</tr>`).join('')}
@@ -2047,6 +2049,8 @@ class UIManager {
       : statusFilter === '要確認' ? !!s.needsCheck
       : (s.status || '有効') === statusFilter);
     shipments = this._filterShipments(shipments, filters);
+    // 印刷用に「今見えている行」を覚えておく（絞り込み・状態をそのまま反映）
+    this._schedulePrintList = shipments;
 
     const allShipments = (await this.db.getAll('shipmentSchedules')).filter(isActiveShipment);
     const uniqueProductCodes = [...new Set(allShipments.map(s => s.productCode))].sort();
@@ -2064,6 +2068,7 @@ class UIManager {
         <input type="file" id="ledger-import-input" accept=".xlsm,.xlsx" style="display: none;" />
         <button id="import-edi-btn" class="btn btn-accent" title="EDIのCSV（複数選択可）">📥 EDI取込</button>
         <button id="import-ledger-btn" class="btn btn-secondary" title="Excel受注台帳で出荷予定を置き換え">📗 Excel受注台帳から取込</button>
+        <button class="btn btn-secondary" title="日付を選んで出荷予定を印刷" onclick="uiManager.showShipmentPrintDialog()">🖨 印刷</button>
         <button class="btn btn-primary" onclick="uiManager.showAddShipmentModal()">➕ 出荷予定を追加</button>
         <button id="clear-schedule-btn" class="btn btn-danger">🗑 すべて削除</button>
       </div>
@@ -2170,6 +2175,212 @@ class UIManager {
     document.getElementById('filter-shipmentDate')?.addEventListener('change', (e) => {
       this.loadShipmentSchedule({ ...filters, shipmentDate: e.target.value || undefined });
     });
+  }
+
+  // ─────────────────────────────────────────────
+  // 製品出荷予定の印刷
+  // ─────────────────────────────────────────────
+
+  /** yyyy-mm-dd → 曜日（日〜土） */
+  _weekdayJa(d) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? ['日', '月', '火', '水', '木', '金', '土'][new Date(+m[1], +m[2] - 1, +m[3]).getDay()] : '';
+  }
+
+  /** 今日（yyyy-mm-dd） */
+  _todayStr() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * 印刷する日付を選ぶダイアログ（期間指定 ＋ 日付ごとのチェック）
+   * 対象は「今画面に見えている行」（状態・絞り込みをそのまま反映）
+   */
+  showShipmentPrintDialog() {
+    const list = this._schedulePrintList || [];
+    const dates = [...new Set(list.map(s => s.shipmentDate || '(日付なし)'))].sort();
+    if (dates.length === 0) {
+      this.showAlert('印刷できる出荷予定がありません', 'error');
+      return;
+    }
+    const today = this._todayStr();
+    const realDates = dates.filter(d => d !== '(日付なし)');
+    // 初期選択: 今日（なければ今日以降で一番近い日）
+    const initial = realDates.includes(today) ? today : (realDates.find(d => d >= today) || realDates[realDates.length - 1] || dates[0]);
+
+    const countOf = (d) => list.filter(s => (s.shipmentDate || '(日付なし)') === d).length;
+    const filtering = ['keyword', 'orderNo', 'productCode', 'productName', 'shipmentDate', 'status']
+      .some(k => this._scheduleFilters?.[k]);
+
+    document.getElementById('shipment-print-dialog')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'shipment-print-dialog';
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width: 460px;">
+        <div class="modal-header">
+          <h2 class="modal-title">🖨 出荷予定を印刷</h2>
+          <button class="modal-close" data-close>&times;</button>
+        </div>
+        ${filtering ? `<div class="form-hint" style="margin-bottom: var(--spacing-sm);">※ 今の絞り込み条件で見えている行だけを印刷します</div>` : ''}
+        <div class="form-group">
+          <label class="form-label">期間で選ぶ</label>
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            <input type="date" id="print-from" class="form-input" style="width: auto;" value="${initial !== '(日付なし)' ? initial : ''}" />
+            〜
+            <input type="date" id="print-to" class="form-input" style="width: auto;" value="${initial !== '(日付なし)' ? initial : ''}" />
+            <button class="btn btn-sm btn-secondary" id="print-apply-range">この期間を選択</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>印刷する日付</span>
+            <span>
+              <button class="btn btn-sm btn-secondary" id="print-check-all">すべて選択</button>
+              <button class="btn btn-sm btn-secondary" id="print-check-none">すべて解除</button>
+            </span>
+          </label>
+          <div id="print-date-list" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+            ${dates.map(d => `
+              <label style="display: flex; gap: 8px; align-items: center; padding: 3px 0; cursor: pointer;">
+                <input type="checkbox" value="${d}" ${d === initial ? 'checked' : ''} />
+                <span><b>${d}</b>${this._weekdayJa(d) ? `（${this._weekdayJa(d)}）` : ''}
+                  ${d === today ? '<span class="ship-date-badge ship-date-today">今日</span>' : ''}
+                  <span style="color: var(--text-muted); font-size: 0.85rem;">${countOf(d)}件</span></span>
+              </label>`).join('')}
+          </div>
+          <div class="form-hint">日付ごとに改ページして印刷します（A4縦）</div>
+        </div>
+        <button class="btn btn-primary" id="print-run" style="width: 100%;">🖨 印刷プレビューを開く</button>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-close]').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const boxes = () => [...overlay.querySelectorAll('#print-date-list input[type=checkbox]')];
+
+    overlay.querySelector('#print-apply-range').addEventListener('click', () => {
+      let from = overlay.querySelector('#print-from').value;
+      let to = overlay.querySelector('#print-to').value;
+      if (!from && !to) return;
+      if (!from) from = to;
+      if (!to) to = from;
+      if (from > to) [from, to] = [to, from];
+      boxes().forEach(b => { b.checked = b.value !== '(日付なし)' && b.value >= from && b.value <= to; });
+    });
+    overlay.querySelector('#print-check-all').addEventListener('click', () => boxes().forEach(b => { b.checked = true; }));
+    overlay.querySelector('#print-check-none').addEventListener('click', () => boxes().forEach(b => { b.checked = false; }));
+    overlay.querySelector('#print-run').addEventListener('click', () => {
+      const selected = boxes().filter(b => b.checked).map(b => b.value);
+      if (selected.length === 0) {
+        this.showAlert('印刷する日付を選んでください', 'error');
+        return;
+      }
+      if (this.printShipmentSchedule(selected)) close();
+    });
+  }
+
+  /**
+   * 指定した日付の出荷予定（今見えている行すべて）を、印刷用ウィンドウに出す
+   * @param {string[]} dates - yyyy-mm-dd の配列（'(日付なし)' も可）
+   * @returns {boolean} ウィンドウを開けたか
+   */
+  printShipmentSchedule(dates) {
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const list = this._schedulePrintList || [];
+    const sorted = [...new Set(dates)].sort();
+    const groups = sorted
+      .map(d => ({ d, items: list.filter(s => (s.shipmentDate || '(日付なし)') === d) }))
+      .filter(g => g.items.length > 0);
+    if (groups.length === 0) {
+      this.showAlert('選んだ日付に印刷できる出荷予定がありません', 'error');
+      return false;
+    }
+
+    // 絞り込み条件（印刷物にも書いておく）
+    const f = this._scheduleFilters || {};
+    const cond = [];
+    cond.push(`状態: ${f.status || '有効（残あり）'}`);
+    if (f.keyword) cond.push(`キーワード「${f.keyword}」`);
+    if (f.orderNo) cond.push(`発注番号「${f.orderNo}」`);
+    if (f.productCode) cond.push(`製品番号 ${f.productCode}`);
+    if (f.productName) cond.push(`製品名「${f.productName}」`);
+
+    const now = new Date();
+    const printedAt = `${this._todayStr()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const num = (v) => (Number(v) || 0).toLocaleString('ja-JP');
+
+    const sections = groups.map(({ d, items }) => {
+      const total = items.reduce((sum, s) => sum + (Number(s.shipmentQuantity) || 0), 0);
+      const wd = this._weekdayJa(d);
+      return `
+<section class="day">
+  <div class="day-head">
+    <h1>製品出荷予定　${esc(d)}${wd ? `（${wd}）` : ''}</h1>
+    <div class="day-meta">${items.length}件 ・ 出荷数 合計 ${num(total)}</div>
+  </div>
+  <div class="cond">${esc(cond.join(' ／ '))}　　印刷日時: ${printedAt}</div>
+  <table>
+    <colgroup><col style="width:19%"><col style="width:15%"><col><col style="width:13%"><col style="width:14%"></colgroup>
+    <thead><tr><th>発注番号</th><th>製品番号</th><th>製品名</th><th>残数</th><th>希望納期</th></tr></thead>
+    <tbody>
+      ${items.map(s => `
+      <tr>
+        <td>${esc(s.orderNo || '-')}${s.needsCheck ? ' <span class="tag">⚠要確認</span>' : ''}${s.status && s.status !== '有効' ? ` <span class="tag">${esc(s.status)}</span>` : ''}</td>
+        <td>${esc(s.productCode)}</td>
+        <td>${esc(s.productName)}</td>
+        <td class="num"><b>${num(s.shipmentQuantity)}</b>${s.orderQty !== undefined && (s.shippedQty || 0) > 0 ? `<div class="sub">発注 ${num(s.orderQty)}・済 ${num(s.shippedQty)}</div>` : ''}</td>
+        <td>${esc(s.shipmentDate || '-')}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+</section>`;
+    }).join('');
+
+    const title = groups.length === 1 ? `製品出荷予定 ${groups[0].d}` : `製品出荷予定 ${groups[0].d}〜${groups[groups.length - 1].d}`;
+    const w = window.open('', '_blank');
+    if (!w) {
+      this.showAlert('印刷用ウィンドウを開けませんでした（ポップアップがブロックされていないか確認してください）', 'error');
+      return false;
+    }
+    w.document.write(`<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><title>${esc(title)}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm 10mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Meiryo', 'Yu Gothic', sans-serif; color: #000; margin: 0; padding: 16px; font-size: 12px; }
+  .toolbar { position: sticky; top: 0; background: #f3f4f6; border: 1px solid #ccc; padding: 8px 12px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; }
+  .toolbar button { padding: 6px 18px; font-size: 14px; cursor: pointer; }
+  .day + .day { page-break-before: always; break-before: page; margin-top: 32px; }
+  .day-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 4px; }
+  h1 { font-size: 18px; margin: 0; }
+  .day-meta { font-size: 13px; font-weight: bold; }
+  .cond { font-size: 10px; color: #444; margin: 4px 0 8px; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead { display: table-header-group; }   /* 改ページしても見出し行をくり返す */
+  tr { page-break-inside: avoid; break-inside: avoid; }
+  th, td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; word-break: break-all; }
+  th { background: #e5e7eb; font-weight: bold; text-align: center; }
+  td.num { text-align: right; }
+  .sub { font-size: 9px; color: #444; }
+  .tag { font-size: 9px; border: 1px solid #000; border-radius: 3px; padding: 0 3px; white-space: nowrap; }
+  @media print {
+    body { padding: 0; }
+    .toolbar { display: none; }
+    .day + .day { margin-top: 0; }
+    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style></head><body>
+<div class="toolbar">
+  <button onclick="window.print()">🖨️ 印刷</button>
+  <span>${groups.length}日分（日付ごとに改ページ）</span>
+</div>
+${sections}
+</body></html>`);
+    w.document.close();
+    return true;
   }
 
   // 製品出荷履歴サブ画面
