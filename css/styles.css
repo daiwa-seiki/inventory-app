@@ -856,6 +856,10 @@ body {
     color: var(--text-secondary);
     font-size: 0.9rem;
 }
+.ship-date-print {
+    float: right;
+    margin: -2px 0;
+}
 .ship-date-badge {
     display: inline-block;
     margin-left: 6px;
