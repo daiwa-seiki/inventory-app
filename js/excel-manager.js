@@ -53,13 +53,68 @@ class ExcelManager {
     }
 
     /**
+     * CSVファイル（製品・部品構成）をインポート
+     * エクセルと同じ列名・同じ処理で登録する（Shift_JIS / UTF-8 のどちらでも可）
+     * @param {File} file - インポートするCSVファイル
+     * @returns {Promise<object>} インポート結果
+     */
+    async importBomCsv(file) {
+        const text = ExcelManager.decodeCsvText(await file.arrayBuffer());
+        const rows = ExcelManager.parseCsv(text);
+        console.log('CSV読み込み成功、行数:', rows.length);
+        return await this.parseAndImportData(rows);
+    }
+
+    /**
+     * CSVの文字コードを判定して文字列にする
+     * UTF-8（BOMあり/なし）として正しく読めればUTF-8、読めなければShift_JIS
+     */
+    static decodeCsvText(buffer) {
+        let text;
+        try {
+            text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+        } catch (e) {
+            text = new TextDecoder('shift_jis').decode(buffer);
+        }
+        return text.replace(/^\uFEFF/, '');
+    }
+
+    /**
+     * CSVテキストを「行の配列（各行はセルの配列）」にする
+     * ダブルクォート・セル内のカンマ/改行に対応。空行は除く
+     */
+    static parseCsv(text) {
+        const rows = [];
+        let row = [], cur = '', inQ = false;
+        const pushRow = () => {
+            row.push(cur);
+            if (row.some(c => c.trim() !== '')) rows.push(row);
+            row = []; cur = '';
+        };
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (inQ) {
+                if (ch === '"') {
+                    if (text[i + 1] === '"') { cur += '"'; i++; } else { inQ = false; }
+                } else cur += ch;
+            } else if (ch === '"') inQ = true;
+            else if (ch === ',') { row.push(cur); cur = ''; }
+            else if (ch === '\r') { /* \r\n の \r は無視 */ }
+            else if (ch === '\n') pushRow();
+            else cur += ch;
+        }
+        if (cur !== '' || row.length > 0) pushRow();
+        return rows;
+    }
+
+    /**
      * データを解析してデータベースに登録（高速版）
      * @param {Array} jsonData - エクセルから読み込んだデータ
      * @returns {Promise<object>} 登録結果
      */
     async parseAndImportData(jsonData) {
         if (!jsonData || !Array.isArray(jsonData) || jsonData.length === 0) {
-            throw new Error('エクセルファイルが空、または読み込めませんでした');
+            throw new Error('ファイルが空、または読み込めませんでした');
         }
 
         console.log(`エクセルインポート開始: ${jsonData.length - 1}行のデータ`);
@@ -88,7 +143,7 @@ class ExcelManager {
                 `必要な列が見つかりません。\n` +
                 `見つからない列: ${missingColumns.join(', ')}\n` +
                 `検出されたヘッダー: ${headers.join(', ')}\n\n` +
-                `エクセルには「セット商品ｺｰﾄﾞ」「商品ｺｰﾄﾞ」の列が必要です。`
+                `エクセル／CSVには「セット商品ｺｰﾄﾞ」「商品ｺｰﾄﾞ」の列が必要です。`
             );
         }
 
@@ -111,8 +166,10 @@ class ExcelManager {
             const productName = row[productNameIndex]?.toString().trim();
             const partCode = row[partCodeIndex]?.toString().trim();
             const partName = row[partNameIndex]?.toString().trim();
-            const quantity = quantityIndex !== -1 ? parseFloat(row[quantityIndex]) : 0;
-            const unitCost = unitCostIndex !== -1 ? parseFloat(row[unitCostIndex]) : 0;
+            // 「1,200」のような桁区切りや全角数字も数値にする（CSV対策。エクセルの数値はそのまま）
+            const toNum = (v) => parseFloat(String(v ?? '').normalize('NFKC').replace(/,/g, ''));
+            const quantity = quantityIndex !== -1 ? toNum(row[quantityIndex]) : 0;
+            const unitCost = unitCostIndex !== -1 ? toNum(row[unitCostIndex]) : 0;
             const supplierCode = supplierCodeIndex !== -1 ? row[supplierCodeIndex]?.toString().trim() : '';
             const supplierName = supplierNameIndex !== -1 ? row[supplierNameIndex]?.toString().trim() : '';
 

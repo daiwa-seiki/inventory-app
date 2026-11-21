@@ -198,7 +198,7 @@ class UIManager {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-md); flex-wrap: wrap; gap: var(--spacing-sm);">
           <h3 class="card-title" style="margin: 0;">製品マスタ</h3>
           <div style="display: flex; gap: var(--spacing-xs);">
-            <button id="import-excel-btn" class="btn btn-secondary">📥 エクセルインポート</button>
+            <button id="import-excel-btn" class="btn btn-secondary" title="エクセル（.xlsx/.xls）またはCSV（.csv）を選択">📥 エクセル/CSVインポート</button>
             <button id="export-excel-btn" class="btn btn-secondary">📤 エクセルエクスポート</button>
             <button id="add-product-btn" class="btn btn-primary">+ 製品追加</button>
           </div>
@@ -1068,13 +1068,13 @@ class UIManager {
   }
 
   /**
-   * エクセルインポートダイアログを表示
+   * エクセル／CSVインポートダイアログを表示（拡張子で読み方を切り替え、登録処理は共通）
    */
   showImportExcelDialog() {
     // ファイル選択用の input 要素を作成
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.xlsx, .xls';
+    fileInput.accept = '.xlsx, .xls, .csv';
 
     fileInput.onchange = async (e) => {
       const file = e.target.files[0];
@@ -1083,13 +1083,14 @@ class UIManager {
       this.showAlert('インポート中...', 'success');
 
       try {
-        const result = await excelManager.importExcel(file);
+        const isCsv = /\.csv$/i.test(file.name);
+        const result = isCsv ? await excelManager.importBomCsv(file) : await excelManager.importExcel(file);
 
         if (result.success) {
           let message = `インポート完了:\n製品 ${result.productsCount}件、部品 ${result.partsCount}件を登録しました`;
 
           message = this._importMessage(message.replace(/\n/g, '<br>'), result.errors);
-          this._recordImportErrors('Excel（製品・部品）', file.name, { ...result, message: `製品 ${result.productsCount}件、部品 ${result.partsCount}件を登録` });
+          this._recordImportErrors(isCsv ? 'CSV（製品・部品）' : 'Excel（製品・部品）', file.name, { ...result, message: `製品 ${result.productsCount}件、部品 ${result.partsCount}件を登録` });
 
           this.showAlert(message, result.errors && result.errors.length > 0 ? 'warning' : 'success');
 
