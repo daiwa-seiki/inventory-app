@@ -2023,11 +2023,27 @@ class UIManager {
     });
   }
 
-  /** 「すべて開く／閉じる」ボタン */
-  _shipmentDateButtons() {
+  /** 過去の日付（今日より前）の見出しをまとめて閉じる（出荷予定のみ） */
+  collapsePastShipmentDates() {
+    const today = this._todayStr();
+    document.querySelectorAll('#shipment-subtab-content .ship-date-header[data-kind="schedule"]').forEach(h => {
+      if (!(h.dataset.date < today) || h.dataset.date === '(日付なし)') return;
+      const rows = h.parentElement.querySelectorAll('.ship-date-row');
+      const isOpen = rows.length > 0 && rows[0].style.display !== 'none';
+      if (isOpen) this.toggleShipmentDate(h);
+    });
+  }
+
+  /**
+   * 「すべて開く／閉じる」ボタン
+   * @param {number} pastDays - 過去の日付の数（1以上なら「過去分を閉じる」ボタンも出す）
+   */
+  _shipmentDateButtons(pastDays = 0) {
     return `
       <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(true)">▼ すべて開く</button>
-      <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(false)">▶ すべて閉じる</button>`;
+      <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(false)">▶ すべて閉じる</button>
+      ${pastDays > 0 ? `<button class="btn btn-sm btn-secondary" title="今日より前の出荷日（${pastDays}日分）をまとめて閉じる"
+        onclick="uiManager.collapsePastShipmentDates()">▶ 過去分を閉じる</button>` : ''}`;
   }
 
   // 製品出荷予定サブ画面
@@ -2060,7 +2076,8 @@ class UIManager {
 
     container.innerHTML = `
       <div style="display: flex; justify-content: flex-end; gap: var(--spacing-sm); margin-bottom: var(--spacing-md);">
-        <div style="margin-right: auto; display: flex; gap: var(--spacing-sm); align-items: center;">${this._shipmentDateButtons()}</div>
+        <div style="margin-right: auto; display: flex; gap: var(--spacing-sm); align-items: center;">${this._shipmentDateButtons(
+          new Set(shipments.map(x => x.shipmentDate).filter(d => d && d < this._todayStr())).size)}</div>
         <select id="filter-status" class="filter-dropdown" title="状態で絞り込み" style="width: auto;">
           ${['有効', '要確認', '完了', '取消', 'すべて'].map(v => `<option value="${v}" ${statusFilter === v ? 'selected' : ''}>${v === '有効' ? '有効（残あり）' : v}</option>`).join('')}
         </select>
