@@ -888,6 +888,79 @@ class ExcelManager {
     }
 
     /**
+     * 出荷履歴の分だけ部品の現在庫を減らす操作（db.batch 用）を作る
+     * 減らす数 = 構成数 × 出荷数（同じ部品が複数の製品・複数行に出てくる場合は合計）
+     * 在庫の下限は0（足りない分は0で止め、在庫履歴に書いておく）
+     * @param {Array} records - 新しく登録する出荷履歴（数量>0・売上のもの）
+     * @returns {Promise<{ops: Array, errors: string[], deductedIds: Set<string>, partCount: number, clampedCount: number}>}
+     */
+    async buildShipmentStockDeductOps(records) {
+        const result = { ops: [], errors: [], deductedIds: new Set(), partCount: 0, clampedCount: 0 };
+        if (records.length === 0) return result;
+
+        const [allParts, allInventory] = await Promise.all([
+            this.db.getAll('parts'),
+            this.db.getAll('inventory')
+        ]);
+        const partsByProduct = new Map();
+        for (const p of allParts) {
+            if (!partsByProduct.has(p.productCode)) partsByProduct.set(p.productCode, []);
+            partsByProduct.get(p.productCode).push(p);
+        }
+        const inventoryMap = new Map(allInventory.map(i => [i.partCode, i]));
+
+        // 部品ごとに減らす数を合計
+        const byPart = new Map();   // partCode → { amount, process, sources: [] }
+        const noBom = new Set();
+        for (const r of records) {
+            const parts = (partsByProduct.get(r.productCode) || []).filter(p => (Number(p.quantity) || 0) > 0);
+            if (parts.length === 0) {
+                noBom.add(r.productCode);
+                continue;
+            }
+            for (const p of parts) {
+                const amount = (Number(p.quantity) || 0) * (Number(r.shipmentQuantity) || 0);
+                if (!byPart.has(p.partCode)) byPart.set(p.partCode, { amount: 0, process: p.process || '', sources: [] });
+                const e = byPart.get(p.partCode);
+                e.amount += amount;
+                e.sources.push(`${r.productCode}×${r.shipmentQuantity}(${r.shipmentDate}${r.orderNo ? ' ' + r.orderNo : ''})`);
+            }
+            result.deductedIds.add(r.id);
+        }
+        for (const code of noBom) {
+            result.errors.push(`製品番号 ${code} は部品構成が未登録のため、現在庫は減らしていません`);
+        }
+
+        const timestamp = Date.now();
+        for (const [partCode, e] of byPart) {
+            if (e.amount <= 0) continue;
+            const inv = inventoryMap.get(partCode);
+            const before = Number(inv?.currentStock) || 0;
+            const after = Math.max(0, before - e.amount);
+            const clamped = before - e.amount < 0;
+            if (clamped) result.clampedCount++;
+            result.partCount++;
+
+            result.ops.push({
+                op: 'put', store: 'inventory',
+                data: { ...(inv || {}), partCode, currentStock: after, updatedAt: timestamp }
+            });
+            const shown = e.sources.length > 3 ? `${e.sources.slice(0, 3).join(', ')} ほか${e.sources.length - 3}件` : e.sources.join(', ');
+            const history = new StockHistory(
+                partCode,
+                '出荷',
+                after - before,
+                before,
+                after,
+                `製品出荷履歴の登録: ${shown}（必要 ${e.amount}）` + (clamped ? ` ※在庫不足のため0で止めました（不足 ${e.amount - before}）` : ''),
+                e.process
+            );
+            result.ops.push({ op: 'add', store: 'stockHistory', data: history.toObject() });
+        }
+        return result;
+    }
+
+    /**
      * CSVテキストをパースして製品出荷履歴を登録（追記）
      * 出荷予定CSVと同じ列形式。既存データは削除せず追記する。
      * @param {string} csvText - CSVテキスト
@@ -1038,11 +1111,17 @@ class ExcelManager {
             if (r.orderNo && r.applicable) r.applied = !!apply.appliedIds?.has(r.id);
         }
 
-        // 出荷履歴の追記と出荷予定の更新を、1回の通信でまとめて実行
+        // 新しく登録する出荷履歴の分だけ、部品の現在庫を減らす（構成数 × 出荷数、0未満にはしない）
+        const stock = await this.buildShipmentStockDeductOps(records.filter(r => r.applicable));
+        errors.push(...stock.errors);
+        for (const r of records) r.stockDeducted = stock.deductedIds.has(r.id);
+
+        // 出荷履歴の追記・出荷予定の更新・在庫の減算を、1回の通信でまとめて実行（全部成功 or 全部取り消し）
         if (records.length > 0) {
             await this.db.batch([
                 ...records.map(({ line, applicable, ...data }) => ({ op: 'put', store: 'shipmentHistory', data })),
-                ...apply.ops
+                ...apply.ops,
+                ...stock.ops
             ]);
         }
 
@@ -1055,6 +1134,7 @@ class ExcelManager {
             errors,
             message: `インポート完了: 成功 ${successCount}件、取込済みのため除外 ${duplicateCount}件、スキップ ${skipCount}件、エラー ${errorCount}件` +
                 (orderIdx >= 0 ? `<br>出荷予定に反映: ${apply.applied}件（うち完了 ${apply.completed}件）` : '<br>※「発注番号」列が無いため、出荷予定には反映していません') +
+                `<br>現在庫を減算: ${stock.partCount}部品` + (stock.clampedCount > 0 ? `（うち在庫が足りず0で止めた ${stock.clampedCount}部品）` : '') +
                 ` (${(totalTime / 1000).toFixed(1)}秒)`
         };
     }
