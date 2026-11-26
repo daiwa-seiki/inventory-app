@@ -1978,16 +1978,22 @@ class UIManager {
       return m ? week[new Date(+m[1], +m[2] - 1, +m[3]).getDay()] : '';
     };
 
-    return groups.map(d => {
+    // 出荷予定: 今日より前の日付は「過去の出荷予定」の枠にまとめる（既定は閉じる。絞り込み中は開く）
+    const isPast = (d) => kind === 'schedule' && d !== '(日付なし)' && d < today;
+    const pastDates = groups.filter(isPast);
+    const pastOpen = filtering || !!this._shipPastOpen;
+
+    const dayHtml = groups.map(d => {
       const items = byDate.get(d);
       const open = filtering || expanded.has(d);
+      const past = isPast(d);
       const total = items.reduce((sum, x) => sum + (Number(x.shipmentQuantity) || 0), 0);
       let badge = '';
       if (d === today) badge = '<span class="ship-date-badge ship-date-today">今日</span>';
       else if (kind === 'schedule' && d < today) badge = '<span class="ship-date-badge ship-date-past">過去</span>';
       const wd = weekday(d);
       return `
-        <tbody class="ship-date-group" data-date="${d}">
+        <tbody class="ship-date-group${past ? ' ship-past-day' : ''}" data-date="${d}"${past && !pastOpen ? ' style="display: none;"' : ''}>
           <tr class="ship-date-header" data-kind="${kind}" data-date="${d}" onclick="uiManager.toggleShipmentDate(this)">
             <td colspan="${kind === 'schedule' ? 7 : 6}">
               <span class="ship-date-indicator">${open ? '▼' : '▶'}</span>
@@ -2000,6 +2006,36 @@ class UIManager {
           ${items.map(x => `<tr class="ship-date-row"${open ? '' : ' style="display: none;"'}>${rowHtml(x)}</tr>`).join('')}
         </tbody>`;
     }).join('');
+
+    if (pastDates.length === 0) return dayHtml;
+
+    // 「過去の出荷予定」の枠（押すと中の日付ごとの見出しを表示）
+    const pastItems = pastDates.flatMap(d => byDate.get(d));
+    const pastTotal = pastItems.reduce((sum, x) => sum + (Number(x.shipmentQuantity) || 0), 0);
+    const pastHeader = `
+        <tbody class="ship-past-wrap">
+          <tr class="ship-date-header ship-past-header" onclick="uiManager.togglePastShipments()">
+            <td colspan="7">
+              <span class="ship-date-indicator ship-past-indicator">${pastOpen ? '▼' : '▶'}</span>
+              <b>過去の出荷予定</b> <span class="ship-date-badge ship-date-past">過去</span>
+              <span class="ship-date-summary">${pastDates[0]} 〜 ${pastDates[pastDates.length - 1]} ・ ${pastDates.length}日分 ・ ${pastItems.length}件 ・ 出荷数 合計 ${pastTotal.toLocaleString('ja-JP')}</span>
+              <span class="ship-past-hint">${pastOpen ? '' : '押すと日付ごとに表示'}</span>
+            </td>
+          </tr>
+        </tbody>`;
+    return pastHeader + dayHtml;
+  }
+
+  /** 「過去の出荷予定」の枠を開閉（開いた状態はアプリを開いている間保つ） */
+  togglePastShipments() {
+    this._shipPastOpen = !this._shipPastOpen;
+    const open = this._shipPastOpen;
+    const root = document.getElementById('shipment-subtab-content') || document;
+    root.querySelectorAll('.ship-past-day').forEach(tb => { tb.style.display = open ? '' : 'none'; });
+    const ind = root.querySelector('.ship-past-indicator');
+    if (ind) ind.textContent = open ? '▼' : '▶';
+    const hint = root.querySelector('.ship-past-hint');
+    if (hint) hint.textContent = open ? '' : '押すと日付ごとに表示';
   }
 
   /** 出荷日の見出しクリックで開閉 */
@@ -2023,27 +2059,11 @@ class UIManager {
     });
   }
 
-  /** 過去の日付（今日より前）の見出しをまとめて閉じる（出荷予定のみ） */
-  collapsePastShipmentDates() {
-    const today = this._todayStr();
-    document.querySelectorAll('#shipment-subtab-content .ship-date-header[data-kind="schedule"]').forEach(h => {
-      if (!(h.dataset.date < today) || h.dataset.date === '(日付なし)') return;
-      const rows = h.parentElement.querySelectorAll('.ship-date-row');
-      const isOpen = rows.length > 0 && rows[0].style.display !== 'none';
-      if (isOpen) this.toggleShipmentDate(h);
-    });
-  }
-
-  /**
-   * 「すべて開く／閉じる」ボタン
-   * @param {number} pastDays - 過去の日付の数（1以上なら「過去分を閉じる」ボタンも出す）
-   */
-  _shipmentDateButtons(pastDays = 0) {
+  /** 「すべて開く／閉じる」ボタン */
+  _shipmentDateButtons() {
     return `
       <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(true)">▼ すべて開く</button>
-      <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(false)">▶ すべて閉じる</button>
-      ${pastDays > 0 ? `<button class="btn btn-sm btn-secondary" title="今日より前の出荷日（${pastDays}日分）をまとめて閉じる"
-        onclick="uiManager.collapsePastShipmentDates()">▶ 過去分を閉じる</button>` : ''}`;
+      <button class="btn btn-sm btn-secondary" onclick="uiManager.toggleAllShipmentDates(false)">▶ すべて閉じる</button>`;
   }
 
   // 製品出荷予定サブ画面
@@ -2076,8 +2096,7 @@ class UIManager {
 
     container.innerHTML = `
       <div style="display: flex; justify-content: flex-end; gap: var(--spacing-sm); margin-bottom: var(--spacing-md);">
-        <div style="margin-right: auto; display: flex; gap: var(--spacing-sm); align-items: center;">${this._shipmentDateButtons(
-          new Set(shipments.map(x => x.shipmentDate).filter(d => d && d < this._todayStr())).size)}</div>
+        <div style="margin-right: auto; display: flex; gap: var(--spacing-sm); align-items: center;">${this._shipmentDateButtons()}</div>
         <select id="filter-status" class="filter-dropdown" title="状態で絞り込み" style="width: auto;">
           ${['有効', '要確認', '完了', '取消', 'すべて'].map(v => `<option value="${v}" ${statusFilter === v ? 'selected' : ''}>${v === '有効' ? '有効（残あり）' : v}</option>`).join('')}
         </select>
