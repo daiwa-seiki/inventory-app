@@ -342,6 +342,7 @@ class InventoryLogic {
     /**
      * 注残在庫を計算
      * 注残在庫 = 現在庫 - Σ(構成数 × 該当する製品の出荷数)
+     * ※ 差し引くのは今日以降の出荷予定だけ（出荷日が過ぎた予定は除く）
      * @param {string} partCode - 部品番号
      * @returns {Promise<number>} 注残在庫
      */
@@ -359,8 +360,8 @@ class InventoryLogic {
                 // この製品の出荷予定を取得
                 const shipments = await this.db.getByIndex('shipmentSchedules', 'productCode', part.productCode);
 
-                // 未出荷の出荷予定の合計（取消・完了は除く）
-                for (const shipment of shipments.filter(isActiveShipment)) {
+                // 未出荷の出荷予定の合計（取消・完了・出荷日が過ぎたものは除く）
+                for (const shipment of shipments.filter(x => isActiveShipment(x) && isUpcomingShipment(x))) {
                     reservedStock += part.quantity * shipment.shipmentQuantity;
                 }
             }
@@ -515,9 +516,9 @@ class InventoryLogic {
         // 在庫をpartCodeキーのMapに変換
         const inventoryMap = new Map(allInventory.map(inv => [inv.partCode, inv.currentStock]));
 
-        // 出荷予定を製品コード別に合計（取消・完了は除く）
+        // 出荷予定を製品コード別に合計（取消・完了・出荷日が過ぎたものは除く）
         const shipmentTotalByProduct = new Map();
-        for (const s of allShipments.filter(isActiveShipment)) {
+        for (const s of allShipments.filter(x => isActiveShipment(x) && isUpcomingShipment(x))) {
             shipmentTotalByProduct.set(s.productCode, (shipmentTotalByProduct.get(s.productCode) || 0) + s.shipmentQuantity);
         }
 

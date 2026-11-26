@@ -504,3 +504,18 @@ class ShipmentSchedule {
 function isActiveShipment(s) {
     return (!s.status || s.status === '有効') && (Number(s.shipmentQuantity) || 0) > 0;
 }
+
+/**
+ * 出荷予定が「今日以降（過去ではない）」かどうか
+ * 注残在庫の計算で、出荷日が過ぎたまま残っている予定を差し引かないために使う
+ * 出荷日が空の行は、過去と判断できないので含める
+ * @param {object} s - 出荷予定データ
+ * @returns {boolean}
+ */
+function isUpcomingShipment(s) {
+    const d = s.shipmentDate;
+    if (!d) return true;
+    const n = new Date();
+    const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+    return d >= today;
+}
