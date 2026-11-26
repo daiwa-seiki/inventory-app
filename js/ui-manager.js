@@ -1233,7 +1233,8 @@ class UIManager {
     }
 
     const shipmentByProduct = new Map();
-    for (const s of allShipments.filter(isActiveShipment)) {
+    // 必要数に入れるのは今日以降の出荷予定だけ（取消・完了・出荷日が過ぎたものは除く）
+    for (const s of allShipments.filter(x => isActiveShipment(x) && isUpcomingShipment(x))) {
       shipmentByProduct.set(s.productCode,
         (shipmentByProduct.get(s.productCode) || 0) + s.shipmentQuantity);
     }
